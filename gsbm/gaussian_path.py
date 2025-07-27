@@ -157,10 +157,11 @@ class EndPointGaussianPath(torch.nn.Module):
 
         sign = 1.0 if direction == "fwd" else -1
 
-        ft = self.basedrift(
-            xt.reshape(B * N, T, D),
-            t,
-        ).reshape(B, N, T, D)
+        #ft = self.basedrift(
+        #    xt.reshape(B * N, T, D),
+        #    t,
+        #).reshape(B, N, T, D)
+        ft = self.basedrift.bd.reshape(B, N, T, D)
         return sign * ft
 
     def drift(self, t, xt, direction):

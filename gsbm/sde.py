@@ -22,6 +22,7 @@ def build_basedrift(cfg):
 class ZeroBaseDrift(torch.nn.Module):
     def __init__(self):
         super(ZeroBaseDrift, self).__init__()
+        self.bd = torch.empty(0)
 
     def forward(self, xt, t):
         return torch.zeros_like(xt)
