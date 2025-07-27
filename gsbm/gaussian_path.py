@@ -145,7 +145,28 @@ class EndPointGaussianPath(torch.nn.Module):
         assert xt.shape == noise.shape
         return xt
 
-    def ft(self, t, xt, direction):
+    # def ft(self, t, xt, direction):
+    #     """
+    #     t: (T,)
+    #     xt: (B, N, T, D)
+    #     ===
+    #     ft: (B, N, T, D)
+    #     """
+    #     B, N, T, D = xt.shape
+    #     assert t.shape == (T,)
+
+    #     sign = 1.0 if direction == "fwd" else -1
+
+    #     #ft = self.basedrift(
+    #     #    xt.reshape(B * N, T, D),
+    #     #    t,
+    #     #).reshape(B, N, T, D)
+    #     print('a')
+    #     print(self.basedrift.bd.shape)
+    #     ft = self.basedrift.bd.reshape(B, N, T, D)
+    #     return sign * ft
+
+    def ft(self, t, xt, direction, x0, x1, v0, v1):
         """
         t: (T,)
         xt: (B, N, T, D)
@@ -157,12 +178,53 @@ class EndPointGaussianPath(torch.nn.Module):
 
         sign = 1.0 if direction == "fwd" else -1
 
-        #ft = self.basedrift(
-        #    xt.reshape(B * N, T, D),
-        #    t,
-        #).reshape(B, N, T, D)
-        ft = self.basedrift.bd.reshape(B, N, T, D)
+        # #ft = self.basedrift(
+        # #    xt.reshape(B * N, T, D),
+        # #    t,
+        # #).reshape(B, N, T, D)
+        # print('a')
+        # print(self.basedrift.bd.shape)
+        # ft = self.basedrift.bd.reshape(B, N, T, D)
+
+        ft = self.get_ut_knn_gaussian(
+            xt.reshape(-1, D),
+            x0,
+            x1,
+            v0,
+            v1
+        )
+        ft = ft.reshape(B, N, T, D)
+
         return sign * ft
+
+    def get_ut_knn_gaussian(
+            xt: torch.Tensor,  # (M, d) query positions
+            x0: torch.Tensor,  # (N0, d) snapshot‑0 positions
+            x1: torch.Tensor,  # (N1, d) snapshot‑1 positions
+            v0: torch.Tensor,  # (N0, d_v) snapshot‑0 velocities
+            v1: torch.Tensor,  # (N1, d_v) snapshot‑1 velocities
+            k: int = 30,
+            eps: float = 1e-12,
+        ):
+            # (N, d) full reference set
+            print(x0.shape, x1.shape, v0.shape, v1.shape)
+            x = torch.cat([x0, x1], dim=0)
+            v = torch.cat([v0, v1], dim=0)
+            # pairwise distances (M, N)
+            dists = torch.cdist(xt, x)
+            print(xt.shape)
+            # k nearest for every query
+            knn_dists, knn_idx = torch.topk(dists, k=k, dim=1, largest=False)
+            # adaptive bandwidth: distance to the furthest of the k neighbours
+            h = knn_dists[:, -1:].clamp_min(eps)  # (M, 1)
+            # Gaussian kernel weights
+            w = torch.exp(-(knn_dists**2) / (2 * h**2))  # (M, k)
+            # w = torch.exp(- (knn_dists / h) ** 2)
+            w = w / (w.sum(dim=1, keepdim=True) + eps)  # normalise
+            # gather neighbour velocities and form weighted sum
+            v_knn = v[knn_idx]  # (M, k, d_v)
+            v_xt = (w.unsqueeze(-1) * v_knn).sum(dim=1) * 100
+            return v_xt
 
     def drift(self, t, xt, direction):
         """Implementation of the drift of Gaussian path in Eq 8
@@ -209,19 +271,19 @@ class EndPointGaussianPath(torch.nn.Module):
         assert drift.shape == xt.shape
         return drift
 
-    def ut(self, t, xt, direction):
+    def ut(self, t, xt, direction, x0, x1, v0, v1):
         """
         t: (T,)
         xt: (B, N, T, D)
         ===
         ut: (B, N, T, D)
         """
-        ft = self.ft(t, xt, direction)
+        ft = self.ft(t, xt, direction, x0, x1, v0, v1)
         drift = self.drift(t, xt, direction)
         assert drift.shape == ft.shape == xt.shape
         return drift - ft
 
-    def forward(self, t, N, direction):
+    def forward(self, t, N, direction, x0, x1, v0, v1):
         """
         t: (T,)
         ===
@@ -233,7 +295,7 @@ class EndPointGaussianPath(torch.nn.Module):
         B, N, T, D = xt.shape
         assert t.shape == (T,)
 
-        ut = self.ut(t, xt, direction)
+        ut = self.ut(t, xt, direction, x0, x1, v0, v1)
         assert ut.shape == xt.shape
 
         return xt, ut
